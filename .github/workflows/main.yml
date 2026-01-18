@@ -33,7 +33,8 @@ jobs:
       # MORNING JOB (08:00 UTC)
       # =========================
       - name: Run Morning Job
-        if: github.event.schedule == '0 8 * * *'
+        if: github.event_name == 'workflow_dispatch'
+            || github.event.schedule == '0 8 * * *'
         run: python main.py morning
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}

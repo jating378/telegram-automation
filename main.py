@@ -13,7 +13,40 @@ API_KEY = os.environ["FOOTBALL_API_KEY"]
 GIST_ID = os.environ.get("GIST_ID")
 GH_TOKEN = os.environ.get("GH_TOKEN")
 
-MAJOR_LEAGUE_IDS = {39, 140, 135, 78, 61, 2, 3}
+LEAGUE_PRIORITY = {
+    2: 100,   # Champions League
+    3: 95,    # Europa League
+    39: 90,   # Premier League
+    140: 88,  # La Liga
+    135: 85,  # Serie A
+    78: 83,   # Bundesliga
+    61: 80,   # Ligue 1
+}
+def match_importance_score(match):
+    league_id = match["league"]["id"]
+    league_score = LEAGUE_PRIORITY.get(league_id, 0)
+
+    home = match["teams"]["home"]["name"]
+    away = match["teams"]["away"]["name"]
+
+    # Extra boost for big clubs
+    big_clubs = [
+        "Real Madrid", "Barcelona", "Manchester United",
+        "Manchester City", "Liverpool", "Arsenal",
+        "Bayern Munich", "PSG", "Juventus", "AC Milan",
+        "Inter", "Chelsea"
+    ]
+
+    club_boost = 0
+    if home in big_clubs:
+        club_boost += 5
+    if away in big_clubs:
+        club_boost += 5
+
+    return league_score + club_boost
+
+MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
+
 
 # =====================
 # TELEGRAM CLIENT (SINGLE)
@@ -50,6 +83,20 @@ CLOSERS = [
     "Match ke baad milte hain!",
     "Stay tuned for more updates!"
 ]
+
+HT_DRAW_LINES = [
+    "Draw ki entry bhi lelo.",
+    "Match draw ki taraf jaa raha hai.",
+    "Balanced game hai, draw ho sakta hai. Put some on draw."
+]
+
+HT_LOSING_LINES = [
+    "Apni entry par hi rehenge.",
+    "Match badalne ke poore chance hai.",
+    "Second half mein comeback ho sakta hai.",
+    "Wait , abhi game khatam nahi hua"
+]
+
 
 # =====================
 # GIST STATE
@@ -140,11 +187,11 @@ def build_prediction(match, goals=None):
 
     if base == "draw":
         line = random.choice(DRAW_LINES)
-        outcome = "📌 BASE OUTCOME : DRAW"
+        outcome = "Phantom Tip : DRAW"
     else:
         team = home if base == "home" else away
         line = random.choice(PREDICTIONS).format(team=team)
-        outcome = f"📌 BASE OUTCOME : {team.upper()} WIN"
+        outcome = f"📌 Phantom Tip : {team.upper()} WIN"
 
     score = ""
     if goals:
@@ -180,7 +227,24 @@ async def send_message(text):
 # =====================
 async def job_morning():
     fixtures = fetch_fixtures(False)
-    fixtures = fixtures[:5]
+
+    # Sort by importance (highest first)
+    fixtures.sort(key=match_importance_score, reverse=True)
+
+    # Dynamic selection
+    selected = []
+
+    for m in fixtures:
+        selected.append(m)
+        if len(selected) >= 5:
+            break
+
+    # Minimum guarantee (at least 2 big matches)
+    if len(selected) < 2:
+        selected = fixtures[:2]
+
+    fixtures = selected
+
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     state = {"date": today, "matches": []}
@@ -201,7 +265,7 @@ async def job_morning():
 
     save_state(state)
 
-    msg = f"🌅 GOOD MORNING PHANTOMS!\n\n📅 {len(state['matches'])} matches selected today:\n\n"
+    msg = f"🌅 GOOD MORNING PHANTOMS! Aaj Jo Matches Hum Karenge --\n\n"
     for m in state["matches"]:
         msg += f"⚽ Match {m['match_number']}: {m['home']} vs {m['away']}\n"
     msg += "\n🕶️ Phantom Time"
@@ -246,13 +310,64 @@ async def job_check():
         status = live_match["fixture"]["status"]["short"]
 
         if status == "HT" and not m["ht"]:
+            home_goals, away_goals = goals
+            base = m["base_outcome"]
+
+            # Determine goal difference relative to our prediction
+            if base == "home":
+                diff = home_goals - away_goals
+            elif base == "away":
+                diff = away_goals - home_goals
+            else:  # base == "draw"
+                if home_goals == away_goals:
+                    diff = 0
+                elif abs(home_goals - away_goals) == 1:
+                    diff = -1
+                else:
+                    diff = -2
+  # draw case
+
+            # ❌ Skip HT if losing by 2 or more
+            if diff <= -2:
+                m["ht"] = True
+                continue
+
             header = build_header(
                 "HALF-TIME UPDATE",
                 m["match_number"], total,
                 m["league"], m["home"], m["away"]
             )
-            await send_message(header + build_prediction(m, goals))
+
+            # ✅ If winning → normal prediction
+            if diff > 0:
+                await send_message(header + build_prediction(m, goals))
+
+            # 🔁 If draw (1–1 etc.)
+            elif diff == 0:
+                line = random.choice(HT_DRAW_LINES)
+                msg = f"""{header}
+        🧠 {line}
+
+        ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
+
+        🕶️ Phantom Time
+        """
+                await send_message(msg)
+
+            # 🔁 Losing by exactly 1
+            elif diff == -1:
+                line = random.choice(HT_LOSING_LINES)
+                msg = f"""{header}
+        🧠 {line}
+
+        ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
+
+        🕶️ Phantom Time
+        """
+                await send_message(msg)
+
             m["ht"] = True
+
 
         if status == "FT" and not m["ft"]:
             success = (

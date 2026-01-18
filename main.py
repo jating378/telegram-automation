@@ -1,0 +1,291 @@
+import asyncio
+import random
+import requests
+import json
+import os
+from datetime import datetime, timezone
+from telethon import TelegramClient
+
+api_id = int(os.environ["TELEGRAM_API_ID"])
+api_hash = os.environ["TELEGRAM_API_HASH"]
+channel_id = int(os.environ["TELEGRAM_CHANNEL_ID"])
+API_KEY = os.environ["FOOTBALL_API_KEY"]
+GIST_ID = os.environ.get("GIST_ID")
+GH_TOKEN = os.environ.get("GH_TOKEN")
+
+MAJOR_LEAGUE_IDS = {39, 140, 135, 78, 61, 2, 3}
+
+# =====================
+# TELEGRAM CLIENT (SINGLE)
+# =====================
+client = TelegramClient("phantom_session", api_id, api_hash)
+
+# =====================
+# MESSAGE TEMPLATES
+# =====================
+STYLE_LINES = [
+    "Abhi tak toh dekh ke lag raha hai",
+    "Live game mein jo dikh raha hai",
+    "Ground se jo signal aa raha hai",
+    "Match ki current situation ke hisaab se",
+    "Jo abhi tak hua hai uske basis pe",
+    "Meri experience ke hisaab se"
+]
+
+PREDICTIONS = [
+    "{team} ke yahan chances zyada ban rahe hain.",
+    "{team} ka control zyada lag raha hai.",
+    "{team} ki side momentum jaata hua lag raha hai.",
+    "{team} pressure bana rahi hai."
+]
+
+DRAW_LINES = [
+    "Abhi ke liye match balanced hai.",
+    "Dono side barabar fight kar rahi hain.",
+    "Filhaal draw type game lag raha hai."
+]
+
+CLOSERS = [
+    "🕶️ Phantom Time",
+    "Match ke baad milte hain!",
+    "Stay tuned for more updates!"
+]
+
+# =====================
+# GIST STATE
+# =====================
+def load_state():
+    if not GIST_ID or not GH_TOKEN:
+        return {"matches": [], "date": None}
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {"Authorization": f"token {GH_TOKEN}"}
+    r = requests.get(url, headers=headers, timeout=10)
+    r.raise_for_status()
+
+    files = r.json().get("files", {})
+    if "match_state.json" not in files:
+        raise RuntimeError("match_state.json missing in Gist")
+
+    return json.loads(files["match_state.json"]["content"])
+
+
+def save_state(state):
+    if not GIST_ID or not GH_TOKEN:
+        return
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {"Authorization": f"token {GH_TOKEN}"}
+    payload = {
+        "files": {
+            "match_state.json": {
+                "content": json.dumps(state, indent=2)
+            }
+        }
+    }
+    requests.patch(url, headers=headers, json=payload, timeout=10)
+
+
+# =====================
+# FOOTBALL API
+# =====================
+def fetch_fixtures(live=False):
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {"x-apisports-key": API_KEY}
+    params = {"live": "all"} if live else {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    }
+
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+
+    return [
+        m for m in r.json().get("response", [])
+        if m["league"]["id"] in MAJOR_LEAGUE_IDS
+    ]
+
+
+# =====================
+# PREDICTION
+# =====================
+def predict_base_outcome(match):
+    stats = match.get("statistics", [])
+
+    home_shots = away_shots = 0
+
+    for team in stats:
+        if team["team"]["id"] == match["teams"]["home"]["id"]:
+            home_shots = next(
+                (s["value"] for s in team["statistics"] if s["type"] == "Shots on Goal"),
+                0
+            ) or 0
+        else:
+            away_shots = next(
+                (s["value"] for s in team["statistics"] if s["type"] == "Shots on Goal"),
+                0
+            ) or 0
+
+    if abs(home_shots - away_shots) <= 1:
+        return "draw"
+    return "home" if home_shots > away_shots else "away"
+
+# =====================
+# MESSAGE BUILDERS (WITH MATCH COUNTER)
+# =====================
+def build_prediction(match, goals=None):
+    style = random.choice(STYLE_LINES)
+    closer = random.choice(CLOSERS)
+    base = match["base_outcome"]
+    home, away = match["home"], match["away"]
+
+    if base == "draw":
+        line = random.choice(DRAW_LINES)
+        outcome = "📌 BASE OUTCOME : DRAW"
+    else:
+        team = home if base == "home" else away
+        line = random.choice(PREDICTIONS).format(team=team)
+        outcome = f"📌 BASE OUTCOME : {team.upper()} WIN"
+
+    score = ""
+    if goals:
+        score = f"\n⚽ {home} {goals[0]} - {goals[1]} {away}\n"
+
+    return f"""🧠 {style}
+{line}
+
+{outcome}
+{score}
+{closer}
+"""
+
+
+def build_header(title, match_no, total, league, home, away):
+    return f"""🚨 MATCH {match_no}/{total} — {title}
+
+🏆 {league}
+{home} vs {away}
+"""
+
+
+# =====================
+# TELEGRAM SEND
+# =====================
+async def send_message(text):
+    await client.send_message(channel_id, text)
+    print("✅ Message sent")
+
+
+# =====================
+# MORNING JOB
+# =====================
+async def job_morning():
+    fixtures = fetch_fixtures(False)
+    fixtures = fixtures[:5]
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    state = {"date": today, "matches": []}
+
+    for i, m in enumerate(fixtures, 1):
+        state["matches"].append({
+            "match_id": str(m["fixture"]["id"]),
+            "match_number": i,
+            "home": m["teams"]["home"]["name"],
+            "away": m["teams"]["away"]["name"],
+            "league": m["league"]["name"],
+            "kickoff": m["fixture"]["date"],
+            "base_outcome": predict_base_outcome(m),
+            "pre": False,
+            "ht": False,
+            "ft": False
+        })
+
+    save_state(state)
+
+    msg = f"🌅 GOOD MORNING PHANTOMS!\n\n📅 {len(state['matches'])} matches selected today:\n\n"
+    for m in state["matches"]:
+        msg += f"⚽ Match {m['match_number']}: {m['home']} vs {m['away']}\n"
+    msg += "\n🕶️ Phantom Time"
+
+    await send_message(msg)
+
+
+# =====================
+# CHECK JOB
+# =====================
+async def job_check():
+    state = load_state()
+    if not state["matches"]:
+        return
+
+    now = datetime.now(timezone.utc)
+    total = len(state["matches"])
+    live = fetch_fixtures(True)
+
+    for m in state["matches"]:
+        kickoff = datetime.fromisoformat(m["kickoff"].replace("Z", "+00:00"))
+
+        # PRE MATCH
+        if not m["pre"] and 0 <= (kickoff - now).total_seconds() / 60 <= 35:
+            header = build_header(
+                "PRE-MATCH ANALYSIS",
+                m["match_number"], total,
+                m["league"], m["home"], m["away"]
+            )
+            await send_message(header + build_prediction(m))
+            m["pre"] = True
+
+        # LIVE
+        live_match = next((x for x in live if str(x["fixture"]["id"]) == m["match_id"]), None)
+        if not live_match:
+            continue
+
+        goals = (
+            live_match["goals"]["home"] or 0,
+            live_match["goals"]["away"] or 0
+        )
+        status = live_match["fixture"]["status"]["short"]
+
+        if status == "HT" and not m["ht"]:
+            header = build_header(
+                "HALF-TIME UPDATE",
+                m["match_number"], total,
+                m["league"], m["home"], m["away"]
+            )
+            await send_message(header + build_prediction(m, goals))
+            m["ht"] = True
+
+        if status == "FT" and not m["ft"]:
+            success = (
+                goals[0] == goals[1] if m["base_outcome"] == "draw"
+                else goals[0] > goals[1] if m["base_outcome"] == "home"
+                else goals[1] > goals[0]
+            )
+            result = "✅ WON" if success else "❌ LOST"
+            header = build_header(
+                f"FULL-TIME RESULT — {result}",
+                m["match_number"], total,
+                m["league"], m["home"], m["away"]
+            )
+            await send_message(header + f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time")
+            m["ft"] = True
+
+    save_state(state)
+
+
+# =====================
+# MAIN
+# =====================
+async def main():
+    import sys
+    await client.start()
+
+    if sys.argv[1] == "morning":
+        await job_morning()
+    elif sys.argv[1] == "check":
+        await job_check()
+
+    await client.disconnect()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

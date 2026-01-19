@@ -51,11 +51,14 @@ MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
 # =====================
 # TELEGRAM CLIENT (SINGLE)
 # =====================
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-
-client = TelegramClient("bot", api_id, api_hash).start(
-    bot_token=TELEGRAM_BOT_TOKEN
+client = TelegramClient(
+    session=None,
+    api_id=api_id,
+    api_hash=api_hash
 )
+
+client.start(bot_token=TELEGRAM_BOT_TOKEN)
+
 
 # =====================
 # MESSAGE TEMPLATES

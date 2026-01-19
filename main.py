@@ -398,13 +398,13 @@ async def job_check():
             # 🔁 Losing by exactly 1
             elif diff == -1:
                 line = random.choice(HT_LOSING_LINES)
-        msg = f"""{header}
-    🧠 {line}
+                msg = f"""{header}
+🧠 {line}
 
-    ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
+⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
 
-    🕶️ Phantom Time
-    """
+🕶️ Phantom Time
+"""
                 await send_message(msg)
 
             m["ht"] = True

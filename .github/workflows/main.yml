@@ -6,7 +6,7 @@ on:
     - cron: "0 8 * * *"
 
     # Check job – runs every 15 minutes
-    - cron: "*/15 * * * *"
+    - cron: "2-17/15 * * * *"
 
   # Allow manual run from GitHub UI
   workflow_dispatch:

@@ -51,10 +51,10 @@ MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
 # =====================
 # TELEGRAM CLIENT (SINGLE)
 # =====================
-BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 client = TelegramClient("bot", api_id, api_hash).start(
-    bot_token=BOT_TOKEN
+    bot_token=TELEGRAM_BOT_TOKEN
 )
 
 # =====================
@@ -242,6 +242,14 @@ async def send_message(text):
 # MORNING JOB
 # =====================
 async def job_morning():
+
+    state = load_state()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if state.get("date") == today and state.get("matches"):
+        print("Morning job already executed today")
+        return
+
     fixtures = fetch_fixtures(False)
 
     # Sort by importance (highest first)

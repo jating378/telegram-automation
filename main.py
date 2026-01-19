@@ -51,7 +51,11 @@ MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
 # =====================
 # TELEGRAM CLIENT (SINGLE)
 # =====================
-client = TelegramClient("phantom_session", api_id, api_hash)
+BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+
+client = TelegramClient("bot", api_id, api_hash).start(
+    bot_token=BOT_TOKEN
+)
 
 # =====================
 # MESSAGE TEMPLATES
@@ -392,14 +396,13 @@ async def job_check():
 # =====================
 async def main():
     import sys
-    await client.start()
+    
 
     if sys.argv[1] == "morning":
         await job_morning()
     elif sys.argv[1] == "check":
         await job_check()
 
-    await client.disconnect()
 
 
 if __name__ == "__main__":

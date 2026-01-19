@@ -278,6 +278,7 @@ async def job_morning():
             "league": m["league"]["name"],
             "kickoff": m["fixture"]["date"],
             "base_outcome": predict_base_outcome(m),
+            "alert": False,
             "pre": False,
             "ht": False,
             "ft": False
@@ -307,6 +308,23 @@ async def job_check():
 
     for m in state["matches"]:
         kickoff = datetime.fromisoformat(m["kickoff"].replace("Z", "+00:00"))
+        # ⏰ BE ACTIVE ALERT (1–1.5 HOURS BEFORE)
+        if not m.get("alert", False):
+            minutes_to_kickoff = (kickoff - now).total_seconds() / 60
+        
+            if 60 <= minutes_to_kickoff <= 90:
+                from datetime import timedelta, timezone
+                IST = timezone(timedelta(hours=5, minutes=30))
+        
+                msg = f"""🚨 BE ACTIVE
+        
+        ⚽ {m['home']} vs {m['away']}
+        ⏰ MATCH TIME – {kickoff.astimezone(IST).strftime('%I:%M %p')} IST
+        
+        🕶️ Phantom Time
+        """
+                await send_message(msg)
+                m["alert"] = True
 
         # PRE MATCH
         if not m["pre"] and 0 <= (kickoff - now).total_seconds() / 60 <= 35:

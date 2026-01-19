@@ -68,13 +68,13 @@ STYLE_LINES = [
 PREDICTIONS = [
     "{team} ke yahan chances zyada ban rahe hain.",
     "{team} ka control zyada lag raha hai.",
-    "{team} ki side momentum jaata hua lag raha hai.",
-    "{team} ke better chances lag rahe hai"
+    "{team} yeh match jeetega.",
+    "{team} will win this match"
 ]
 
 DRAW_LINES = [
-    "Abhi ke liye match balanced hai.",
-    "Dono side barabar fight kar rahi hain.",
+    "Abhi ke liye match balanced hai , half time tak wait krenge.",
+    "Dono side barabar fight kar rahi hain , kuch entry banti toh update karta.",
     "Filhaal draw type game lag raha hai."
 ]
 

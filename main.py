@@ -69,7 +69,7 @@ PREDICTIONS = [
     "{team} ke yahan chances zyada ban rahe hain.",
     "{team} ka control zyada lag raha hai.",
     "{team} ki side momentum jaata hua lag raha hai.",
-    "{team} pressure bana rahi hai."
+    "{team} ke better chances lag rahe hai"
 ]
 
 DRAW_LINES = [
@@ -407,19 +407,31 @@ async def job_check():
             m["ht"] = True
 
 
-        if status == "FT" and not m["ft"]:
+        elapsed = live_match["fixture"]["status"].get("elapsed", 0)
+
+        if not m["ft"] and (
+            status in ("FT", "AET", "PEN") or
+            (status == "2H" and elapsed >= 88)
+        ):
             success = (
                 goals[0] == goals[1] if m["base_outcome"] == "draw"
                 else goals[0] > goals[1] if m["base_outcome"] == "home"
                 else goals[1] > goals[0]
             )
-            result = "✅ WON" if success else "❌ LOST"
+        
+            result = "✅ Tip Pass" if success else "❌ Tip Fail"
+        
             header = build_header(
                 f"FULL-TIME RESULT — {result}",
                 m["match_number"], total,
                 m["league"], m["home"], m["away"]
             )
-            await send_message(header + f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time")
+        
+            await send_message(
+                header +
+                f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time"
+            )
+        
             m["ft"] = True
 
     save_state(state)

@@ -313,7 +313,7 @@ async def job_check():
             minutes_to_kickoff = (kickoff - now).total_seconds() / 60
         
             if 60 <= minutes_to_kickoff <= 90:
-                from datetime import timedelta, timezone
+                
                 IST = timezone(timedelta(hours=5, minutes=30))
         
                 msg = f"""🚨 BE ACTIVE

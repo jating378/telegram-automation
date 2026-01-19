@@ -50,15 +50,7 @@ MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
 
 
 # =====================
-# TELEGRAM CLIENT (SINGLE)
-# =====================
-client = TelegramClient(
-    session=None,
-    api_id=api_id,
-    api_hash=api_hash
-)
 
-client.start(bot_token=TELEGRAM_BOT_TOKEN)
 
 
 # =====================
@@ -420,13 +412,26 @@ async def job_check():
 # =====================
 async def main():
     import sys
-    
 
-    if sys.argv[1] == "morning":
-        await job_morning()
-    elif sys.argv[1] == "check":
-        await job_check()
+    if len(sys.argv) < 2:
+        return
 
+    global client
+    client = TelegramClient(
+        session=None,
+        api_id=api_id,
+        api_hash=api_hash
+    )
+
+    await client.start(bot_token=TELEGRAM_BOT_TOKEN)
+
+    try:
+        if sys.argv[1] == "morning":
+            await job_morning()
+        elif sys.argv[1] == "check":
+            await job_check()
+    finally:
+        await client.disconnect()
 
 
 if __name__ == "__main__":

@@ -418,49 +418,49 @@ async def job_check():
         elapsed = live_match["fixture"]["status"].get("elapsed", 0)
 
         if not m["ft"] and (
-    status in ("FT", "AET", "PEN") or
-    (status == "2H" and elapsed >= 88)
+            status in ("FT", "AET", "PEN") or
+            (status == "2H" and elapsed >= 88)
 ):
-    final_is_draw = goals[0] == goals[1]
-    success = (
-        (m["base_outcome"] == "draw" and final_is_draw) or
-        (m["base_outcome"] == "home" and goals[0] > goals[1]) or
-        (m["base_outcome"] == "away" and goals[1] > goals[0]) or
-        (final_is_draw and m.get("ht_draw_advised", False))
-    )
+            final_is_draw = goals[0] == goals[1]
+            success = (
+                (m["base_outcome"] == "draw" and final_is_draw) or
+                (m["base_outcome"] == "home" and goals[0] > goals[1]) or
+                (m["base_outcome"] == "away" and goals[1] > goals[0]) or
+                (final_is_draw and m.get("ht_draw_advised", False))
+            )
 
-    result = "✅ Tip Pass" if success else "❌ Tip Fail"
-    m["success"] = success
-
-    header = build_header(
-        f"FULL-TIME RESULT — {result}",
-        m["match_number"], total,
-        m["league"], m["home"], m["away"]
-    )
-
-    await send_message(
-        header +
-        f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time"
-    )
-
-    m["ft"] = True
-    save_state(state)   # ✅ CRITICAL FIX
-
-    if all(x.get("ft") for x in state["matches"]) and not state.get("day_summary_sent"):
-        passed = sum(1 for x in state["matches"] if x.get("success"))
-        failed = len(state["matches"]) - passed
-
-        summary_msg = f"""📊 DAY SUMMARY
-
+            result = "✅ Tip Pass" if success else "❌ Tip Fail"
+            m["success"] = success
+        
+            header = build_header(
+                f"FULL-TIME RESULT — {result}",
+                m["match_number"], total,
+                m["league"], m["home"], m["away"]
+            )
+        
+            await send_message(
+                header +
+                f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time"
+            )
+        
+            m["ft"] = True
+            save_state(state)   # ✅ CRITICAL FIX
+        
+            if all(x.get("ft") for x in state["matches"]) and not state.get("day_summary_sent"):
+                passed = sum(1 for x in state["matches"] if x.get("success"))
+                failed = len(state["matches"]) - passed
+        
+                summary_msg = f"""📊 DAY SUMMARY
+        
 ✅ PASSED: {passed}
 ❌ FAILED: {failed}
 
 🕶️ Phantom Time
 """
-        await send_message(summary_msg)
-        state["day_summary_sent"] = True
-        save_state(state)
-            
+                await send_message(summary_msg)
+                state["day_summary_sent"] = True
+                save_state(state)
+                    
 
 # =====================
 # MAIN

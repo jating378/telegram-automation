@@ -3,7 +3,7 @@ import random
 import requests
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone , timedelta
 from telethon import TelegramClient
 
 api_id = int(os.environ["TELEGRAM_API_ID"])

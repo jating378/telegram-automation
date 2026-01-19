@@ -349,7 +349,12 @@ async def job_check():
         )
         status = live_match["fixture"]["status"]["short"]
 
-        if status == "HT" and not m["ht"]:
+        elapsed = live_match["fixture"]["status"].get("elapsed", 0)
+
+        if not m["ht"] and (
+            status == "HT" or
+            (status == "2H" and elapsed <= 55)
+        ):
             home_goals, away_goals = goals
             base = m["base_outcome"]
 

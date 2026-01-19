@@ -12,6 +12,7 @@ channel_id = int(os.environ["TELEGRAM_CHANNEL_ID"])
 API_KEY = os.environ["FOOTBALL_API_KEY"]
 GIST_ID = os.environ.get("GIST_ID")
 GH_TOKEN = os.environ.get("GH_TOKEN")
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 LEAGUE_PRIORITY = {
     2: 100,   # Champions League

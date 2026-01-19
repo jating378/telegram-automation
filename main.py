@@ -416,7 +416,7 @@ async def job_check():
             status in ("FT", "AET", "PEN") or
             (status == "2H" and elapsed >= 88)
         ):
-        final_is_draw = goals[0] == goals[1]
+            final_is_draw = goals[0] == goals[1]
             success = (
             # Base outcome success
             (m["base_outcome"] == "draw" and final_is_draw) or

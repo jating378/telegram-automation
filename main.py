@@ -150,6 +150,40 @@ def fetch_fixtures(live=False):
         m for m in r.json().get("response", [])
         if m["league"]["id"] in MAJOR_LEAGUE_IDS
     ]
+    
+    
+    
+def fetch_match_odds(fixture_id):
+    url = "https://v3.football.api-sports.io/odds"
+    headers = {"x-apisports-key": API_KEY}
+    params = {
+        "fixture": fixture_id,
+        "bet": 1  # 1X2 market
+    }
+
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+
+    response = r.json().get("response", [])
+    if not response:
+        return None
+
+    bookmakers = response[0].get("bookmakers", [])
+    if not bookmakers:
+        return None
+
+    bets = bookmakers[0].get("bets", [])
+    values = bets[0].get("values", [])
+
+    odds = {}
+    for v in values:
+        odds[v["value"].lower()] = float(v["odd"])
+
+    return {
+        "home": odds.get("home"),
+        "draw": odds.get("draw"),
+        "away": odds.get("away")
+    }
 
 
 # =====================
@@ -162,15 +196,23 @@ def predict_base_outcome(match):
 
     # ✅ ADD THIS BLOCK (PRE-MATCH FIX)
     if not stats:
+        odds = match.get("odds")
+    
+        # If odds available, trust market
+        if odds and odds.get("home") and odds.get("away"):
+            if odds["home"] < odds["away"]:
+                return "home"
+            elif odds["away"] < odds["home"]:
+                return "away"
+    
+        # Home advantage fallback
         r = random.random()
-
-        if r < 0.45:
+        if r < 0.50:
             return "home"
-        elif r < 0.70:
+        elif r < 0.72:
             return "draw"
         else:
             return "away"
-    # ✅ END CHANGE
 
     for team in stats:
         if team["team"]["id"] == match["teams"]["home"]["id"]:
@@ -188,6 +230,21 @@ def predict_base_outcome(match):
         return "draw"
     return "home" if home_shots > away_shots else "away"
 
+
+def format_odds(match):
+    odds = match.get("odds", {})
+    if not odds:
+        return ""
+
+    h = odds.get("home")
+    d = odds.get("draw")
+    a = odds.get("away")
+
+    return f"""📊 MARKET ODDS
+🏠 {match['home']} Win — {h if h else '-'}
+🤝 Draw — {d if d else '-'}
+🚪 {match['away']} — {a if a else '-'}
+"""
 # =====================
 # MESSAGE BUILDERS (WITH MATCH COUNTER)
 # =====================
@@ -196,6 +253,7 @@ def build_prediction(match, goals=None):
     closer = random.choice(CLOSERS)
     base = match["base_outcome"]
     home, away = match["home"], match["away"]
+    odds_block = format_odds(match)
 
     if base == "draw":
         line = random.choice(DRAW_LINES)
@@ -203,13 +261,14 @@ def build_prediction(match, goals=None):
     else:
         team = home if base == "home" else away
         line = random.choice(PREDICTIONS).format(team=team)
-        outcome = f"📌 Phantom Tip : {team.upper()} WIN"
+        outcome = f"📌 Phantom Tip : {team.upper()} Ko WIN Karo"
 
     score = ""
     if goals:
         score = f"\n⚽ {home} {goals[0]} - {goals[1]} {away}\n"
 
-    return f"""🧠 {style}
+    return f"""{odds_block}
+🧠 {style}
 {line}
 
 {outcome}
@@ -270,6 +329,13 @@ async def job_morning():
     state = {"date": today, "matches": []}
 
     for i, m in enumerate(fixtures, 1):
+
+        odds = fetch_match_odds(m["fixture"]["id"]) or {
+            "home": None,
+            "draw": None,
+            "away": None
+        }
+    
         state["matches"].append({
             "match_id": str(m["fixture"]["id"]),
             "match_number": i,
@@ -277,6 +343,7 @@ async def job_morning():
             "away": m["teams"]["away"]["name"],
             "league": m["league"]["name"],
             "kickoff": m["fixture"]["date"],
+            "odds": odds,  # ✅ stored
             "base_outcome": predict_base_outcome(m),
             "ht_draw_advised": False,
             "alert": False,
@@ -285,7 +352,7 @@ async def job_morning():
             "day_summary_sent": False,
             "ft": False
         })
-
+    
     save_state(state)
 
     msg = f"🌅 GOOD MORNING PHANTOMS! Aaj Jo Matches Hum Karenge --\n\n"
@@ -294,6 +361,9 @@ async def job_morning():
     msg += "\n🕶️ Phantom Time"
 
     await send_message(msg)
+    
+    
+
 
 
 # =====================
@@ -394,17 +464,25 @@ async def job_check():
 
             # 🔁 If draw (1–1 etc.)
             elif diff == 0:
-                line = random.choice(HT_DRAW_LINES)
-                m["ht_draw_advised"] = True
-                msg = f"""{header}
-🧠 {line}
+                draw_odds = (m.get("odds") or {}).get("draw")
+
+                # Only advise draw if odds are good
+                if draw_odds and draw_odds >= 2.20 and not m.get("ht_draw_advised"):
+                    m["ht_draw_advised"] = True
+            
+                    msg = f"""{header}
+🧠 Match abhi tak tight chal raha hai
+Zyada domination nahi dikh rahi
 
 ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
 
+📌 Hedge Tip:
+Thodi Limit Draw Par Lagao 🤝
+💰 Draw Odds: {draw_odds}
+
 🕶️ Phantom Time
 """
-                await send_message(msg)
-
+        await send_message(msg)
             # 🔁 Losing by exactly 1
             elif diff == -1:
                 line = random.choice(HT_LOSING_LINES)

@@ -340,7 +340,12 @@ async def job_check():
 
         # LIVE
         live_match = next((x for x in live if str(x["fixture"]["id"]) == m["match_id"]), None)
+        
         if not live_match:
+            if not m["ft"] and now > kickoff + timedelta(hours=2, minutes=30):
+                m["ft"] = True
+                m["success"] = None  # unknown / skipped
+                save_state(state)
             continue
 
         goals = (

@@ -278,9 +278,11 @@ async def job_morning():
             "league": m["league"]["name"],
             "kickoff": m["fixture"]["date"],
             "base_outcome": predict_base_outcome(m),
+            "ht_draw_advised": False,
             "alert": False,
             "pre": False,
             "ht": False,
+            "day_summary_sent": False,
             "ft": False
         })
 
@@ -383,6 +385,7 @@ async def job_check():
             # 🔁 If draw (1–1 etc.)
             elif diff == 0:
                 line = random.choice(HT_DRAW_LINES)
+                m["ht_draw_advised"] = True
                 msg = f"""{header}
 🧠 {line}
 
@@ -395,13 +398,13 @@ async def job_check():
             # 🔁 Losing by exactly 1
             elif diff == -1:
                 line = random.choice(HT_LOSING_LINES)
-                msg = f"""{header}
-        🧠 {line}
+        msg = f"""{header}
+    🧠 {line}
 
-        ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
+    ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
 
-        🕶️ Phantom Time
-        """
+    🕶️ Phantom Time
+    """
                 await send_message(msg)
 
             m["ht"] = True
@@ -413,13 +416,19 @@ async def job_check():
             status in ("FT", "AET", "PEN") or
             (status == "2H" and elapsed >= 88)
         ):
+        final_is_draw = goals[0] == goals[1]
             success = (
-                goals[0] == goals[1] if m["base_outcome"] == "draw"
-                else goals[0] > goals[1] if m["base_outcome"] == "home"
-                else goals[1] > goals[0]
-            )
+            # Base outcome success
+            (m["base_outcome"] == "draw" and final_is_draw) or
+            (m["base_outcome"] == "home" and goals[0] > goals[1]) or
+            (m["base_outcome"] == "away" and goals[1] > goals[0]) or
         
+            # HT draw hedge success
+            (final_is_draw and m.get("ht_draw_advised", False))
+    )
+            
             result = "✅ Tip Pass" if success else "❌ Tip Fail"
+            m["success"] = success
         
             header = build_header(
                 f"FULL-TIME RESULT — {result}",
@@ -433,9 +442,23 @@ async def job_check():
             )
         
             m["ft"] = True
-
-    save_state(state)
-
+            
+            if all(x.get("ft") for x in state["matches"]) and not state.get("day_summary_sent"):
+                passed = sum(1 for x in state["matches"] if x.get("success"))
+                failed = len(state["matches"]) - passed
+            
+                summary_msg = f"""📊 DAY SUMMARY
+            
+            ✅ PASSED: {passed}
+            ❌ FAILED: {failed}
+            
+            🕶️ Phantom Time
+            """
+                await send_message(summary_msg)
+                state["day_summary_sent"] = True
+                        
+                save_state(state)
+            
 
 # =====================
 # MAIN

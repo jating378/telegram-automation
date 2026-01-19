@@ -164,6 +164,18 @@ def predict_base_outcome(match):
 
     home_shots = away_shots = 0
 
+    # ✅ ADD THIS BLOCK (PRE-MATCH FIX)
+    if not stats:
+        r = random.random()
+
+        if r < 0.45:
+            return "home"
+        elif r < 0.70:
+            return "draw"
+        else:
+            return "away"
+    # ✅ END CHANGE
+
     for team in stats:
         if team["team"]["id"] == match["teams"]["home"]["id"]:
             home_shots = next(

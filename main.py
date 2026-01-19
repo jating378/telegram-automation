@@ -87,7 +87,7 @@ CLOSERS = [
 HT_DRAW_LINES = [
     "Draw ki entry bhi lelo.",
     "Match draw ki taraf jaa raha hai.",
-    "Balanced game hai, draw ho sakta hai. Put some on draw."
+    "Balanced game hai, draw ho sakta hai. Thodi Limit draw par bhi rakho."
 ]
 
 HT_LOSING_LINES = [
@@ -318,11 +318,11 @@ async def job_check():
         
                 msg = f"""🚨 BE ACTIVE
         
-        ⚽ {m['home']} vs {m['away']}
-        ⏰ MATCH TIME – {kickoff.astimezone(IST).strftime('%I:%M %p')} IST
+⚽ {m['home']} vs {m['away']}
+⏰ MATCH TIME – {kickoff.astimezone(IST).strftime('%I:%M %p')} IST
         
-        🕶️ Phantom Time
-        """
+🕶️ Phantom Time
+"""
                 await send_message(msg)
                 m["alert"] = True
 
@@ -384,12 +384,12 @@ async def job_check():
             elif diff == 0:
                 line = random.choice(HT_DRAW_LINES)
                 msg = f"""{header}
-        🧠 {line}
+🧠 {line}
 
-        ⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
+⚽ {m['home']} {home_goals} - {away_goals} {m['away']}
 
-        🕶️ Phantom Time
-        """
+🕶️ Phantom Time
+"""
                 await send_message(msg)
 
             # 🔁 Losing by exactly 1

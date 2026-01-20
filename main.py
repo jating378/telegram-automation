@@ -107,18 +107,34 @@ HT_LOSING_LINES = [
 # =====================
 def load_state():
     if not GIST_ID or not GH_TOKEN:
-        return {"matches": [], "date": None}
+        return {"matches": [], "date": None, "day_summary_sent": False}
 
-    url = f"https://api.github.com/gists/{GIST_ID}"
-    headers = {"Authorization": f"token {GH_TOKEN}"}
-    r = requests.get(url, headers=headers, timeout=10)
-    r.raise_for_status()
+    try:
+        url = f"https://api.github.com/gists/{GIST_ID}"
+        headers = {"Authorization": f"token {GH_TOKEN}"}
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
 
-    files = r.json().get("files", {})
-    if "match_state.json" not in files:
-        raise RuntimeError("match_state.json missing in Gist")
+        files = r.json().get("files", {})
+        if "match_state.json" not in files:
+            print("match_state.json not found in Gist, returning empty state")
+            return {"matches": [], "date": None, "day_summary_sent": False}
 
-    return json.loads(files["match_state.json"]["content"])
+        content = files["match_state.json"]["content"]
+        
+        # Handle empty or whitespace-only content
+        if not content or not content.strip():
+            print("Gist content is empty, returning empty state")
+            return {"matches": [], "date": None, "day_summary_sent": False}
+
+        return json.loads(content)
+    
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in Gist: {e}, returning empty state")
+        return {"matches": [], "date": None, "day_summary_sent": False}
+    except Exception as e:
+        print(f"Error loading state: {e}, returning empty state")
+        return {"matches": [], "date": None, "day_summary_sent": False}
 
 
 def save_state(state):

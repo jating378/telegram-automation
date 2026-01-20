@@ -9,65 +9,52 @@ from telethon import TelegramClient
 api_id = int(os.environ["TELEGRAM_API_ID"])
 api_hash = os.environ["TELEGRAM_API_HASH"]
 channel_id = int(os.environ["TELEGRAM_CHANNEL_ID"])
-RAPIDAPI_KEY = os.environ["RAPIDAPI_KEY"]  # Your RapidAPI key
+API_KEY = os.environ["FOOTBALL_API_KEY"]
 GIST_ID = os.environ.get("GIST_ID")
 GH_TOKEN = os.environ.get("GH_TOKEN")
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
-# RapidAPI settings
-RAPIDAPI_HOST = "free-api-live-football-data.p.rapidapi.com"
-BASE_URL = f"https://{RAPIDAPI_HOST}"
-
-# League IDs for this API
-LEAGUE_IDS = {
-    "premier_league": 47,      # Premier League
-    "la_liga": 87,             # La Liga
-    "serie_a": 55,             # Serie A
-    "bundesliga": 54,          # Bundesliga
-    "ligue_1": 53,             # Ligue 1
-    "champions_league": 42,    # Champions League
-    "europa_league": 73,       # Europa League
-}
-
 LEAGUE_PRIORITY = {
-    42: 100,   # Champions League
-    73: 95,    # Europa League
-    47: 90,    # Premier League
-    87: 85,    # La Liga
-    55: 80,    # Serie A
-    54: 75,    # Bundesliga
-    53: 70,    # Ligue 1
-}
+    # INTERNATIONAL
+    1: 100,    # FIFA World Cup
+    4: 98,     # UEFA Euro
+    9: 96,     # Copa America
+    5: 94,     # UEFA Nations League
 
-MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
+    # CLUB
+    2: 92,     # UEFA Champions League
+    3: 90,     # UEFA Europa League
+    39: 88,    # Premier League
+    140: 86,   # La Liga
+    135: 84,   # Serie A
+    78: 82,    # Bundesliga
+}
 
 
 def match_importance_score(match):
-    league_id = match.get("leagueId", 0)
+    league_id = match["league"]["id"]
     league_score = LEAGUE_PRIORITY.get(league_id, 0)
 
-    home = match.get("homeTeam", {}).get("name", "")
-    away = match.get("awayTeam", {}).get("name", "")
+    home = match["teams"]["home"]["name"]
+    away = match["teams"]["away"]["name"]
 
     big_clubs = [
         "Real Madrid", "Barcelona", "Manchester United",
         "Manchester City", "Liverpool", "Arsenal",
-        "Bayern Munich", "Bayern München", "PSG", "Paris Saint-Germain",
-        "Juventus", "AC Milan", "Milan",
-        "Inter", "Inter Milan", "Chelsea"
+        "Bayern Munich", "PSG", "Juventus", "AC Milan",
+        "Inter", "Chelsea"
     ]
 
     club_boost = 0
-    for club in big_clubs:
-        if club.lower() in home.lower():
-            club_boost += 5
-            break
-    for club in big_clubs:
-        if club.lower() in away.lower():
-            club_boost += 5
-            break
+    if home in big_clubs:
+        club_boost += 5
+    if away in big_clubs:
+        club_boost += 5
 
     return league_score + club_boost
+
+
+MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
 
 
 # =====================
@@ -135,6 +122,7 @@ def load_state():
 
         content = files["match_state.json"]["content"]
         
+        # Handle empty or whitespace-only content
         if not content or not content.strip():
             print("Gist content is empty, returning empty state")
             return {"matches": [], "date": None, "day_summary_sent": False}
@@ -166,183 +154,141 @@ def save_state(state):
 
 
 # =====================
-# RAPIDAPI FOOTBALL API
+# FOOTBALL API
 # =====================
-def get_api_headers():
-    return {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-    }
-
-
-def fetch_matches_by_date_and_league(league_id, date=None):
-    """Fetch matches for a specific league on a specific date"""
-    if date is None:
-        date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    
-    url = f"{BASE_URL}/football-get-matches-by-date-and-league"
-    params = {"date": date, "leagueid": league_id}
-    
-    try:
-        r = requests.get(url, headers=get_api_headers(), params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        
-        # Handle different response formats
-        if isinstance(data, list):
-            # API returns list directly
-            return data
-        elif isinstance(data, dict):
-            # API returns dict with status/response
-            if data.get("status") and data.get("response"):
-                response = data["response"]
-                if isinstance(response, list):
-                    return response
-                elif isinstance(response, dict):
-                    return response.get("matches", [])
-            # Try other common formats
-            if "matches" in data:
-                return data["matches"]
-            if "data" in data:
-                return data["data"] if isinstance(data["data"], list) else []
-        return []
-    except Exception as e:
-        print(f"[ERROR] fetch_matches_by_date_and_league({league_id}, {date}): {e}")
-        return []
-
-
-def fetch_live_matches():
-    """Fetch today's matches from major leagues and filter for live ones"""
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
-    all_live_matches = []
-    
-    # Live status indicators (adjust based on actual API response)
-    live_statuses = [
-        "1H", "2H", "HT", "ET", "P", "LIVE", "IN_PLAY", "PLAYING", 
-        "FIRST_HALF", "SECOND_HALF", "EXTRA_TIME", "PENALTY",
-        "1st Half", "2nd Half", "Half Time", "Extra Time"
-    ]
-    
-    for league_name, league_id in LEAGUE_IDS.items():
-        print(f"[DEBUG] Checking {league_name} for live matches...")
-        matches = fetch_matches_by_date_and_league(league_id, today)
-        
-        for m in matches:
-            m["leagueId"] = league_id
-            m["leagueName"] = league_name.replace("_", " ").title()
-            
-            # Check if match is live based on status
-            status = str(m.get("status", "")).strip()
-            status_upper = status.upper()
-            
-            # Check various live indicators
-            is_live = False
-            
-            # Check if status is in known live statuses
-            if status_upper in [s.upper() for s in live_statuses]:
-                is_live = True
-            # Check if status is a minute number (e.g., "45", "67")
-            elif status.isdigit() and 1 <= int(status) <= 120:
-                is_live = True
-            # Check if status contains minute indicator (e.g., "45'", "67+2")
-            elif "'" in status or (status.replace("+", "").replace(" ", "").isdigit()):
-                is_live = True
-            
-            if is_live:
-                all_live_matches.append(m)
-                print(f"[DEBUG] Live match found: {m.get('homeTeam', {}).get('name', 'Unknown')} vs {m.get('awayTeam', {}).get('name', 'Unknown')}")
-    
-    print(f"[DEBUG] Total live matches found: {len(all_live_matches)}")
-    return all_live_matches
-
-
-def fetch_match_details(match_id):
-    """Fetch detailed info for a specific match"""
-    url = f"{BASE_URL}/football-get-match-details"
-    params = {"matchid": match_id}
-    
-    try:
-        r = requests.get(url, headers=get_api_headers(), params=params, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        
-        if data.get("status") and data.get("response"):
-            return data["response"]
-        return None
-    except Exception as e:
-        print(f"[ERROR] fetch_match_details({match_id}): {e}")
-        return None
-
-
 def fetch_fixtures_window():
-    """Fetch today's and tomorrow's matches from major leagues"""
-    all_fixtures = []
+    fixtures = []
     seen = set()
-    
-    today = datetime.now(timezone.utc)
-    tomorrow = today + timedelta(days=1)
-    
-    dates_to_check = [
-        today.strftime("%Y%m%d"),
-        tomorrow.strftime("%Y%m%d")
-    ]
-    
-    for date in dates_to_check:
-        for league_name, league_id in LEAGUE_IDS.items():
-            print(f"[DEBUG] Fetching matches for {league_name} (ID: {league_id}) on {date}")
-            matches = fetch_matches_by_date_and_league(league_id, date)
-            
-            for m in matches:
-                match_id = m.get("id") or m.get("matchId")
-                if match_id and match_id not in seen:
-                    seen.add(match_id)
-                    m["leagueId"] = league_id
-                    m["leagueName"] = league_name.replace("_", " ").title()
-                    all_fixtures.append(m)
-    
-    print(f"[DEBUG] Total fixtures found: {len(all_fixtures)}")
-    
-    # Filter for scheduled/upcoming matches (not finished)
-    finished_statuses = ["FT", "FINISHED", "FULL TIME", "FULL-TIME", "AET", "PEN", "CANC", "PST", "ABD"]
-    upcoming = []
-    
-    for m in all_fixtures:
-        status = str(m.get("status", "")).upper()
-        if status not in finished_statuses:
-            upcoming.append(m)
-    
-    # If no upcoming found, return all
-    if not upcoming:
-        upcoming = all_fixtures
-    
-    return upcoming
+
+    for offset in (-1, 0, 1):
+        date_str = (datetime.now(timezone.utc) + timedelta(days=offset)).strftime("%Y-%m-%d")
+        url = "https://v3.football.api-sports.io/fixtures"
+        headers = {"x-apisports-key": API_KEY}
+        params = {"date": date_str}
+
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+
+        for m in r.json().get("response", []):
+            if m["league"]["id"] in MAJOR_LEAGUE_IDS:
+                fid = m["fixture"]["id"]
+                if fid not in seen:
+                    seen.add(fid)
+                    fixtures.append(m)
+
+    return fixtures
 
 
 def fetch_fixtures(live=False):
     """Fetch fixtures - either live matches or today's matches"""
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {"x-apisports-key": API_KEY}
+
     if live:
-        return fetch_live_matches()
+        params = {"live": "all"}
     else:
-        return fetch_fixtures_window()
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        params = {"date": date_str}
+
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+
+    return [m for m in r.json().get("response", [])
+            if m["league"]["id"] in MAJOR_LEAGUE_IDS]
+
+
+def fetch_match_odds(fixture_id):
+    url = "https://v3.football.api-sports.io/odds"
+    headers = {"x-apisports-key": API_KEY}
+    params = {
+        "fixture": fixture_id,
+        "bet": 1  # 1X2 market
+    }
+
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+
+    response = r.json().get("response", [])
+    if not response:
+        return None
+
+    bookmakers = response[0].get("bookmakers", [])
+    if not bookmakers:
+        return None
+
+    bets = bookmakers[0].get("bets", [])
+    if not bets:
+        return None
+
+    values = bets[0].get("values", [])
+
+    odds = {}
+    for v in values:
+        odds[v["value"].lower()] = float(v["odd"])
+
+    return {
+        "home": odds.get("home"),
+        "draw": odds.get("draw"),
+        "away": odds.get("away")
+    }
 
 
 # =====================
 # PREDICTION
 # =====================
 def predict_base_outcome(match):
-    """Predict match outcome based on home advantage"""
-    r = random.random()
-    if r < 0.45:
-        return "home"
-    elif r < 0.72:
+    stats = match.get("statistics", [])
+
+    home_shots = away_shots = 0
+
+    if not stats:
+        odds = match.get("odds")
+
+        if odds and odds.get("home") and odds.get("away"):
+            if odds["home"] < odds["away"]:
+                return "home"
+            elif odds["away"] < odds["home"]:
+                return "away"
+
+        r = random.random()
+        if r < 0.50:
+            return "home"
+        elif r < 0.72:
+            return "draw"
+        else:
+            return "away"
+
+    for team in stats:
+        if team["team"]["id"] == match["teams"]["home"]["id"]:
+            home_shots = next(
+                (s["value"] for s in team["statistics"] if s["type"] == "Shots on Goal"),
+                0
+            ) or 0
+        else:
+            away_shots = next(
+                (s["value"] for s in team["statistics"] if s["type"] == "Shots on Goal"),
+                0
+            ) or 0
+
+    if abs(home_shots - away_shots) <= 1:
         return "draw"
-    else:
-        return "away"
+    return "home" if home_shots > away_shots else "away"
 
 
 def format_odds(match):
-    """Format odds block"""
-    return ""  # This free API doesn't provide odds
+    odds = match.get("odds", {})
+    if not odds:
+        return ""
+
+    h = odds.get("home")
+    d = odds.get("draw")
+    a = odds.get("away")
+
+    return f"""📊 MARKET ODDS
+🏠 {match['home']} Win — {h if h else '-'}
+🤝 Draw — {d if d else '-'}
+🚪 {match['away']} — {a if a else '-'}
+"""
 
 
 # =====================
@@ -394,79 +340,6 @@ async def send_message(text):
 
 
 # =====================
-# HELPER FUNCTIONS
-# =====================
-def extract_match_info(match):
-    """Extract match info from API response (handles different response formats)"""
-    # Try different field names
-    match_id = match.get("id") or match.get("matchId") or match.get("match_id")
-    
-    # Home team
-    home_team = match.get("homeTeam", {})
-    if isinstance(home_team, dict):
-        home_name = home_team.get("name") or home_team.get("teamName") or "Home"
-    else:
-        home_name = match.get("homeTeamName") or match.get("home") or "Home"
-    
-    # Away team
-    away_team = match.get("awayTeam", {})
-    if isinstance(away_team, dict):
-        away_name = away_team.get("name") or away_team.get("teamName") or "Away"
-    else:
-        away_name = match.get("awayTeamName") or match.get("away") or "Away"
-    
-    # League
-    league_name = match.get("leagueName") or match.get("league", {}).get("name") or "Unknown League"
-    
-    # Kickoff time
-    kickoff = match.get("startTime") or match.get("time") or match.get("date") or match.get("utcDate")
-    if not kickoff:
-        # Default to 2 hours from now if no time found
-        kickoff = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
-    
-    # Score - handle different formats
-    home_score = 0
-    away_score = 0
-    
-    # Try homeScore/awayScore
-    if "homeScore" in match:
-        home_score = match.get("homeScore", 0) or 0
-    elif "homeGoals" in match:
-        home_score = match.get("homeGoals", 0) or 0
-    elif "home_score" in match:
-        home_score = match.get("home_score", 0) or 0
-    
-    if "awayScore" in match:
-        away_score = match.get("awayScore", 0) or 0
-    elif "awayGoals" in match:
-        away_score = match.get("awayGoals", 0) or 0
-    elif "away_score" in match:
-        away_score = match.get("away_score", 0) or 0
-    
-    # Try score object
-    score = match.get("score", {})
-    if isinstance(score, dict):
-        if "home" in score:
-            home_score = score.get("home", 0) or 0
-        if "away" in score:
-            away_score = score.get("away", 0) or 0
-    
-    # Status
-    status = match.get("status") or match.get("matchStatus") or "SCHEDULED"
-    
-    return {
-        "match_id": str(match_id) if match_id else "",
-        "home": home_name,
-        "away": away_name,
-        "league": league_name,
-        "kickoff": kickoff,
-        "home_score": int(home_score) if home_score else 0,
-        "away_score": int(away_score) if away_score else 0,
-        "status": str(status)
-    }
-
-
-# =====================
 # MORNING JOB
 # =====================
 async def job_morning():
@@ -479,33 +352,41 @@ async def job_morning():
 
     fixtures = fetch_fixtures_window()
     if not fixtures:
-        print("No matches found")
+        print("No matches found in ±1 day window")
         return
 
-    # Sort by importance
     fixtures.sort(key=match_importance_score, reverse=True)
 
-    # Select top 5
-    selected = fixtures[:5] if len(fixtures) >= 5 else fixtures
+    selected = []
+    for m in fixtures:
+        selected.append(m)
+        if len(selected) >= 5:
+            break
 
-    if not selected:
-        print("No matches to select")
-        return
+    if len(selected) < 2:
+        selected = fixtures[:2]
 
+    fixtures = selected
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     state = {"date": today, "matches": [], "day_summary_sent": False}
 
-    for i, m in enumerate(selected, 1):
-        info = extract_match_info(m)
-        
+    for i, m in enumerate(fixtures, 1):
+        odds = fetch_match_odds(m["fixture"]["id"]) or {
+            "home": None,
+            "draw": None,
+            "away": None
+        }
+
         match_data = {
-            "match_id": info["match_id"],
+            "match_id": str(m["fixture"]["id"]),
             "match_number": i,
-            "home": info["home"],
-            "away": info["away"],
-            "league": info["league"],
-            "kickoff": info["kickoff"],
-            "odds": None,
-            "base_outcome": predict_base_outcome(m),
+            "home": m["teams"]["home"]["name"],
+            "away": m["teams"]["away"]["name"],
+            "league": m["league"]["name"],
+            "kickoff": m["fixture"]["date"],
+            "odds": odds,
+            "base_outcome": predict_base_outcome({**m, "odds": odds}),
             "ht_draw_advised": False,
             "alert": False,
             "pre": False,
@@ -514,7 +395,6 @@ async def job_morning():
             "success": None
         }
         state["matches"].append(match_data)
-        print(f"[DEBUG] Added match {i}: {info['home']} vs {info['away']}")
 
     save_state(state)
 
@@ -532,27 +412,14 @@ async def job_morning():
 async def job_check():
     state = load_state()
     if not state.get("matches"):
-        print("No matches in state")
         return
 
     now = datetime.now(timezone.utc)
     total = len(state["matches"])
-    
-    # Fetch live matches
-    live_matches = fetch_live_matches()
-    print(f"[DEBUG] Found {len(live_matches)} live matches")
+    live = fetch_fixtures(live=True)
 
     for m in state["matches"]:
-        # Parse kickoff time
-        try:
-            kickoff_str = m["kickoff"]
-            if "T" in kickoff_str:
-                kickoff = datetime.fromisoformat(kickoff_str.replace("Z", "+00:00"))
-            else:
-                # Try to parse as timestamp or other format
-                kickoff = datetime.now(timezone.utc) + timedelta(hours=1)
-        except:
-            kickoff = datetime.now(timezone.utc) + timedelta(hours=1)
+        kickoff = datetime.fromisoformat(m["kickoff"].replace("Z", "+00:00"))
 
         # ⏰ BE ACTIVE ALERT (1–1.5 HOURS BEFORE)
         if not m.get("alert", False):
@@ -571,49 +438,35 @@ async def job_check():
                 await send_message(msg)
                 m["alert"] = True
 
-        # PRE MATCH (0-35 minutes before kickoff)
-        if not m["pre"]:
-            minutes_to_kickoff = (kickoff - now).total_seconds() / 60
-            if 0 <= minutes_to_kickoff <= 35:
-                header = build_header(
-                    "PRE-MATCH ANALYSIS",
-                    m["match_number"], total,
-                    m["league"], m["home"], m["away"]
-                )
-                await send_message(header + build_prediction(m))
-                m["pre"] = True
+        # PRE MATCH
+        if not m["pre"] and 0 <= (kickoff - now).total_seconds() / 60 <= 35:
+            header = build_header(
+                "PRE-MATCH ANALYSIS",
+                m["match_number"], total,
+                m["league"], m["home"], m["away"]
+            )
+            await send_message(header + build_prediction(m))
+            m["pre"] = True
 
-        # Find live match data
-        live_match = None
-        for lm in live_matches:
-            lm_info = extract_match_info(lm)
-            if m["match_id"] and lm_info["match_id"] == m["match_id"]:
-                live_match = lm
-                break
-            # Also try matching by team names
-            if (m["home"].lower() in lm_info["home"].lower() or 
-                lm_info["home"].lower() in m["home"].lower()):
-                if (m["away"].lower() in lm_info["away"].lower() or 
-                    lm_info["away"].lower() in m["away"].lower()):
-                    live_match = lm
-                    break
+        # LIVE
+        live_match = next((x for x in live if str(x["fixture"]["id"]) == m["match_id"]), None)
 
         if not live_match:
-            # Check if match should be finished
             if not m["ft"] and now > kickoff + timedelta(hours=2, minutes=30):
                 m["ft"] = True
                 m["success"] = None
                 save_state(state)
             continue
 
-        # Extract live match info
-        live_info = extract_match_info(live_match)
-        goals = (live_info["home_score"], live_info["away_score"])
-        status = live_info["status"].upper()
+        goals = (
+            live_match["goals"]["home"] or 0,
+            live_match["goals"]["away"] or 0
+        )
+        status = live_match["fixture"]["status"]["short"]
+        elapsed = live_match["fixture"]["status"].get("elapsed", 0)
 
         # HALF-TIME UPDATE
-        ht_statuses = ["HT", "HALFTIME", "HALF TIME", "HALF-TIME", "PAUSED"]
-        if not m["ht"] and status in ht_statuses:
+        if not m["ht"] and (status == "HT" or (status == "2H" and elapsed <= 55)):
             home_goals, away_goals = goals
             base = m["base_outcome"]
 
@@ -629,7 +482,6 @@ async def job_check():
                 else:
                     diff = -2
 
-            # Skip HT message if losing by 2+
             if diff <= -2:
                 m["ht"] = True
                 continue
@@ -644,8 +496,11 @@ async def job_check():
                 await send_message(header + build_prediction(m, goals))
 
             elif diff == 0:
-                if not m.get("ht_draw_advised"):
+                draw_odds = (m.get("odds") or {}).get("draw")
+
+                if draw_odds and draw_odds >= 2.20 and not m.get("ht_draw_advised"):
                     m["ht_draw_advised"] = True
+
                     msg = f"""{header}
 🧠 Match abhi tak tight chal raha hai
 Zyada domination nahi dikh rahi
@@ -654,6 +509,7 @@ Zyada domination nahi dikh rahi
 
 📌 Hedge Tip:
 Thodi Limit Draw Par Lagao 🤝
+💰 Draw Odds: {draw_odds}
 
 🕶️ Phantom Time
 """
@@ -673,8 +529,7 @@ Thodi Limit Draw Par Lagao 🤝
             m["ht"] = True
 
         # FULL-TIME
-        ft_statuses = ["FT", "FINISHED", "FULL TIME", "FULL-TIME", "AET", "PEN"]
-        if not m["ft"] and status in ft_statuses:
+        if not m["ft"] and (status in ("FT", "AET", "PEN") or (status == "2H" and elapsed >= 88)):
             final_is_draw = goals[0] == goals[1]
             success = (
                 (m["base_outcome"] == "draw" and final_is_draw) or
@@ -726,7 +581,7 @@ async def main():
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python main.py [morning|check]")
+        print("Usage: python phantom_bot.py [morning|check]")
         return
 
     global client

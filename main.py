@@ -3,7 +3,7 @@ import random
 import requests
 import json
 import os
-from datetime import datetime, timezone , timedelta
+from datetime import datetime, timezone, timedelta
 from telethon import TelegramClient
 
 api_id = int(os.environ["TELEGRAM_API_ID"])
@@ -29,6 +29,8 @@ LEAGUE_PRIORITY = {
     135: 84,   # Serie A
     78: 82,    # Bundesliga
 }
+
+
 def match_importance_score(match):
     league_id = match["league"]["id"]
     league_score = LEAGUE_PRIORITY.get(league_id, 0)
@@ -36,7 +38,6 @@ def match_importance_score(match):
     home = match["teams"]["home"]["name"]
     away = match["teams"]["away"]["name"]
 
-    # Extra boost for big clubs
     big_clubs = [
         "Real Madrid", "Barcelona", "Manchester United",
         "Manchester City", "Liverpool", "Arsenal",
@@ -52,11 +53,8 @@ def match_importance_score(match):
 
     return league_score + club_boost
 
+
 MAJOR_LEAGUE_IDS = set(LEAGUE_PRIORITY.keys())
-
-
-# =====================
-
 
 
 # =====================
@@ -163,8 +161,26 @@ def fetch_fixtures_window():
                     fixtures.append(m)
 
     return fixtures
-    
-    
+
+
+def fetch_fixtures(live=False):
+    """Fetch fixtures - either live matches or today's matches"""
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {"x-apisports-key": API_KEY}
+
+    if live:
+        params = {"live": "all"}
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        params = {"date": date_str}
+
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+
+    return [m for m in r.json().get("response", [])
+            if m["league"]["id"] in MAJOR_LEAGUE_IDS]
+
+
 def fetch_match_odds(fixture_id):
     url = "https://v3.football.api-sports.io/odds"
     headers = {"x-apisports-key": API_KEY}
@@ -185,6 +201,9 @@ def fetch_match_odds(fixture_id):
         return None
 
     bets = bookmakers[0].get("bets", [])
+    if not bets:
+        return None
+
     values = bets[0].get("values", [])
 
     odds = {}
@@ -206,18 +225,15 @@ def predict_base_outcome(match):
 
     home_shots = away_shots = 0
 
-    # ✅ ADD THIS BLOCK (PRE-MATCH FIX)
     if not stats:
         odds = match.get("odds")
-    
-        # If odds available, trust market
+
         if odds and odds.get("home") and odds.get("away"):
             if odds["home"] < odds["away"]:
                 return "home"
             elif odds["away"] < odds["home"]:
                 return "away"
-    
-        # Home advantage fallback
+
         r = random.random()
         if r < 0.50:
             return "home"
@@ -257,8 +273,10 @@ def format_odds(match):
 🤝 Draw — {d if d else '-'}
 🚪 {match['away']} — {a if a else '-'}
 """
+
+
 # =====================
-# MESSAGE BUILDERS (WITH MATCH COUNTER)
+# MESSAGE BUILDERS
 # =====================
 def build_prediction(match, goals=None):
     style = random.choice(STYLE_LINES)
@@ -309,7 +327,6 @@ async def send_message(text):
 # MORNING JOB
 # =====================
 async def job_morning():
-
     state = load_state()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -322,52 +339,47 @@ async def job_morning():
         print("No matches found in ±1 day window")
         return
 
-    # Sort by importance (highest first)
     fixtures.sort(key=match_importance_score, reverse=True)
 
-    # Dynamic selection
     selected = []
-
     for m in fixtures:
         selected.append(m)
         if len(selected) >= 5:
             break
 
-    # Minimum guarantee (at least 2 big matches)
     if len(selected) < 2:
         selected = fixtures[:2]
 
     fixtures = selected
 
-
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    state = {"date": today, "matches": []}
+    state = {"date": today, "matches": [], "day_summary_sent": False}
 
     for i, m in enumerate(fixtures, 1):
-
         odds = fetch_match_odds(m["fixture"]["id"]) or {
             "home": None,
             "draw": None,
             "away": None
         }
-    
-        state["matches"].append({
+
+        match_data = {
             "match_id": str(m["fixture"]["id"]),
             "match_number": i,
             "home": m["teams"]["home"]["name"],
             "away": m["teams"]["away"]["name"],
             "league": m["league"]["name"],
             "kickoff": m["fixture"]["date"],
-            "odds": odds,  # ✅ stored
-            "base_outcome": predict_base_outcome(m),
+            "odds": odds,
+            "base_outcome": predict_base_outcome({**m, "odds": odds}),
             "ht_draw_advised": False,
             "alert": False,
             "pre": False,
             "ht": False,
-            "day_summary_sent": False,
-            "ft": False
-        })
-    
+            "ft": False,
+            "success": None
+        }
+        state["matches"].append(match_data)
+
     save_state(state)
 
     msg = f"🌅 GOOD MORNING PHANTOMS! Aaj Jo Matches Hum Karenge --\n\n"
@@ -376,9 +388,6 @@ async def job_morning():
     msg += "\n🕶️ Phantom Time"
 
     await send_message(msg)
-    
-    
-
 
 
 # =====================
@@ -386,28 +395,28 @@ async def job_morning():
 # =====================
 async def job_check():
     state = load_state()
-    if not state["matches"]:
+    if not state.get("matches"):
         return
 
     now = datetime.now(timezone.utc)
     total = len(state["matches"])
-    live = fetch_fixtures(True)
+    live = fetch_fixtures(live=True)
 
     for m in state["matches"]:
         kickoff = datetime.fromisoformat(m["kickoff"].replace("Z", "+00:00"))
+
         # ⏰ BE ACTIVE ALERT (1–1.5 HOURS BEFORE)
         if not m.get("alert", False):
             minutes_to_kickoff = (kickoff - now).total_seconds() / 60
-        
+
             if 60 <= minutes_to_kickoff <= 90:
-                
                 IST = timezone(timedelta(hours=5, minutes=30))
-        
+
                 msg = f"""🚨 BE ACTIVE
-        
+
 ⚽ {m['home']} vs {m['away']}
 ⏰ MATCH TIME – {kickoff.astimezone(IST).strftime('%I:%M %p')} IST
-        
+
 🕶️ Phantom Time
 """
                 await send_message(msg)
@@ -425,11 +434,11 @@ async def job_check():
 
         # LIVE
         live_match = next((x for x in live if str(x["fixture"]["id"]) == m["match_id"]), None)
-        
+
         if not live_match:
             if not m["ft"] and now > kickoff + timedelta(hours=2, minutes=30):
                 m["ft"] = True
-                m["success"] = None  # unknown / skipped
+                m["success"] = None
                 save_state(state)
             continue
 
@@ -438,31 +447,25 @@ async def job_check():
             live_match["goals"]["away"] or 0
         )
         status = live_match["fixture"]["status"]["short"]
-
         elapsed = live_match["fixture"]["status"].get("elapsed", 0)
 
-        if not m["ht"] and (
-            status == "HT" or
-            (status == "2H" and elapsed <= 55)
-        ):
+        # HALF-TIME UPDATE
+        if not m["ht"] and (status == "HT" or (status == "2H" and elapsed <= 55)):
             home_goals, away_goals = goals
             base = m["base_outcome"]
 
-            # Determine goal difference relative to our prediction
             if base == "home":
                 diff = home_goals - away_goals
             elif base == "away":
                 diff = away_goals - home_goals
-            else:  # base == "draw"
+            else:
                 if home_goals == away_goals:
                     diff = 0
                 elif abs(home_goals - away_goals) == 1:
                     diff = -1
                 else:
                     diff = -2
-  # draw case
 
-            # ❌ Skip HT if losing by 2 or more
             if diff <= -2:
                 m["ht"] = True
                 continue
@@ -473,18 +476,15 @@ async def job_check():
                 m["league"], m["home"], m["away"]
             )
 
-            # ✅ If winning → normal prediction
             if diff > 0:
                 await send_message(header + build_prediction(m, goals))
 
-            # 🔁 If draw (1–1 etc.)
             elif diff == 0:
                 draw_odds = (m.get("odds") or {}).get("draw")
 
-                # Only advise draw if odds are good
                 if draw_odds and draw_odds >= 2.20 and not m.get("ht_draw_advised"):
                     m["ht_draw_advised"] = True
-            
+
                     msg = f"""{header}
 🧠 Match abhi tak tight chal raha hai
 Zyada domination nahi dikh rahi
@@ -497,8 +497,8 @@ Thodi Limit Draw Par Lagao 🤝
 
 🕶️ Phantom Time
 """
-                await send_message(msg)
-            # 🔁 Losing by exactly 1
+                    await send_message(msg)
+
             elif diff == -1:
                 line = random.choice(HT_LOSING_LINES)
                 msg = f"""{header}
@@ -512,13 +512,8 @@ Thodi Limit Draw Par Lagao 🤝
 
             m["ht"] = True
 
-
-        elapsed = live_match["fixture"]["status"].get("elapsed", 0)
-
-        if not m["ft"] and (
-            status in ("FT", "AET", "PEN") or
-            (status == "2H" and elapsed >= 88)
-):
+        # FULL-TIME
+        if not m["ft"] and (status in ("FT", "AET", "PEN") or (status == "2H" and elapsed >= 88)):
             final_is_draw = goals[0] == goals[1]
             success = (
                 (m["base_outcome"] == "draw" and final_is_draw) or
@@ -529,27 +524,28 @@ Thodi Limit Draw Par Lagao 🤝
 
             result = "✅ Tip Pass" if success else "❌ Tip Fail"
             m["success"] = success
-        
+
             header = build_header(
                 f"FULL-TIME RESULT — {result}",
                 m["match_number"], total,
                 m["league"], m["home"], m["away"]
             )
-        
+
             await send_message(
                 header +
                 f"\n⚽ FINAL SCORE: {goals[0]}-{goals[1]}\n\n🕶️ Phantom Time"
             )
-        
+
             m["ft"] = True
-            save_state(state)   # ✅ CRITICAL FIX
-        
+            save_state(state)
+
+            # DAY SUMMARY
             if all(x.get("ft") for x in state["matches"]) and not state.get("day_summary_sent"):
                 passed = sum(1 for x in state["matches"] if x.get("success"))
                 failed = len(state["matches"]) - passed
-        
+
                 summary_msg = f"""📊 DAY SUMMARY
-        
+
 ✅ PASSED: {passed}
 ❌ FAILED: {failed}
 
@@ -558,7 +554,9 @@ Thodi Limit Draw Par Lagao 🤝
                 await send_message(summary_msg)
                 state["day_summary_sent"] = True
                 save_state(state)
-                    
+
+    save_state(state)
+
 
 # =====================
 # MAIN
@@ -567,6 +565,7 @@ async def main():
     import sys
 
     if len(sys.argv) < 2:
+        print("Usage: python phantom_bot.py [morning|check]")
         return
 
     global client
@@ -583,6 +582,8 @@ async def main():
             await job_morning()
         elif sys.argv[1] == "check":
             await job_check()
+        else:
+            print(f"Unknown command: {sys.argv[1]}")
     finally:
         await client.disconnect()
 

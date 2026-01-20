@@ -15,13 +15,19 @@ GH_TOKEN = os.environ.get("GH_TOKEN")
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 LEAGUE_PRIORITY = {
-    2: 100,   # Champions League
-    3: 95,    # Europa League
-    39: 90,   # Premier League
-    140: 88,  # La Liga
-    135: 85,  # Serie A
-    78: 83,   # Bundesliga
-    61: 80,   # Ligue 1
+    # INTERNATIONAL
+    1: 100,    # FIFA World Cup
+    4: 98,     # UEFA Euro
+    9: 96,     # Copa America
+    5: 94,     # UEFA Nations League
+
+    # CLUB
+    2: 92,     # UEFA Champions League
+    3: 90,     # UEFA Europa League
+    39: 88,    # Premier League
+    140: 86,   # La Liga
+    135: 84,   # Serie A
+    78: 82,    # Bundesliga
 }
 def match_importance_score(match):
     league_id = match["league"]["id"]
@@ -136,21 +142,27 @@ def save_state(state):
 # =====================
 # FOOTBALL API
 # =====================
-def fetch_fixtures(live=False):
-    url = "https://v3.football.api-sports.io/fixtures"
-    headers = {"x-apisports-key": API_KEY}
-    params = {"live": "all"} if live else {
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    }
+def fetch_fixtures_window():
+    fixtures = []
+    seen = set()
 
-    r = requests.get(url, headers=headers, params=params, timeout=15)
-    r.raise_for_status()
+    for offset in (-1, 0, 1):
+        date_str = (datetime.now(timezone.utc) + timedelta(days=offset)).strftime("%Y-%m-%d")
+        url = "https://v3.football.api-sports.io/fixtures"
+        headers = {"x-apisports-key": API_KEY}
+        params = {"date": date_str}
 
-    return [
-        m for m in r.json().get("response", [])
-        if m["league"]["id"] in MAJOR_LEAGUE_IDS
-    ]
-    
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+
+        for m in r.json().get("response", []):
+            if m["league"]["id"] in MAJOR_LEAGUE_IDS:
+                fid = m["fixture"]["id"]
+                if fid not in seen:
+                    seen.add(fid)
+                    fixtures.append(m)
+
+    return fixtures
     
     
 def fetch_match_odds(fixture_id):
@@ -305,7 +317,10 @@ async def job_morning():
         print("Morning job already executed today")
         return
 
-    fixtures = fetch_fixtures(False)
+    fixtures = fetch_fixtures_window()
+    if not fixtures:
+        print("No matches found in ±1 day window")
+        return
 
     # Sort by importance (highest first)
     fixtures.sort(key=match_importance_score, reverse=True)

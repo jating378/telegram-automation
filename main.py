@@ -19,7 +19,6 @@ RAPIDAPI_HOST = "free-api-live-football-data.p.rapidapi.com"
 BASE_URL = f"https://{RAPIDAPI_HOST}"
 
 # League IDs for this API
-# You can find league IDs by calling the leagues endpoint
 LEAGUE_IDS = {
     "premier_league": 47,      # Premier League
     "la_liga": 87,             # La Liga
@@ -176,10 +175,13 @@ def get_api_headers():
     }
 
 
-def fetch_matches_by_league(league_id):
-    """Fetch all matches for a specific league"""
-    url = f"{BASE_URL}/football-get-all-matches-by-league"
-    params = {"leagueid": league_id}
+def fetch_matches_by_date_and_league(league_id, date=None):
+    """Fetch matches for a specific league on a specific date"""
+    if date is None:
+        date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    
+    url = f"{BASE_URL}/football-get-matches-by-date-and-league"
+    params = {"date": date, "leagueid": league_id}
     
     try:
         r = requests.get(url, headers=get_api_headers(), params=params, timeout=15)
@@ -187,30 +189,57 @@ def fetch_matches_by_league(league_id):
         data = r.json()
         
         if data.get("status") and data.get("response"):
-            return data["response"].get("matches", [])
+            matches = data["response"].get("matches", [])
+            return matches
         return []
     except Exception as e:
-        print(f"[ERROR] fetch_matches_by_league({league_id}): {e}")
+        print(f"[ERROR] fetch_matches_by_date_and_league({league_id}, {date}): {e}")
         return []
 
 
 def fetch_live_matches():
-    """Fetch all live matches"""
-    url = f"{BASE_URL}/football-get-all-live-matches"
+    """Fetch today's matches from major leagues and filter for live ones"""
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    all_live_matches = []
     
-    try:
-        r = requests.get(url, headers=get_api_headers(), timeout=15)
-        r.raise_for_status()
-        data = r.json()
+    # Live status indicators (adjust based on actual API response)
+    live_statuses = [
+        "1H", "2H", "HT", "ET", "P", "LIVE", "IN_PLAY", "PLAYING", 
+        "FIRST_HALF", "SECOND_HALF", "EXTRA_TIME", "PENALTY",
+        "1st Half", "2nd Half", "Half Time", "Extra Time"
+    ]
+    
+    for league_name, league_id in LEAGUE_IDS.items():
+        print(f"[DEBUG] Checking {league_name} for live matches...")
+        matches = fetch_matches_by_date_and_league(league_id, today)
         
-        if data.get("status") and data.get("response"):
-            matches = data["response"].get("matches", [])
-            # Filter for major leagues
-            return [m for m in matches if m.get("leagueId") in MAJOR_LEAGUE_IDS]
-        return []
-    except Exception as e:
-        print(f"[ERROR] fetch_live_matches: {e}")
-        return []
+        for m in matches:
+            m["leagueId"] = league_id
+            m["leagueName"] = league_name.replace("_", " ").title()
+            
+            # Check if match is live based on status
+            status = str(m.get("status", "")).strip()
+            status_upper = status.upper()
+            
+            # Check various live indicators
+            is_live = False
+            
+            # Check if status is in known live statuses
+            if status_upper in [s.upper() for s in live_statuses]:
+                is_live = True
+            # Check if status is a minute number (e.g., "45", "67")
+            elif status.isdigit() and 1 <= int(status) <= 120:
+                is_live = True
+            # Check if status contains minute indicator (e.g., "45'", "67+2")
+            elif "'" in status or (status.replace("+", "").replace(" ", "").isdigit()):
+                is_live = True
+            
+            if is_live:
+                all_live_matches.append(m)
+                print(f"[DEBUG] Live match found: {m.get('homeTeam', {}).get('name', 'Unknown')} vs {m.get('awayTeam', {}).get('name', 'Unknown')}")
+    
+    print(f"[DEBUG] Total live matches found: {len(all_live_matches)}")
+    return all_live_matches
 
 
 def fetch_match_details(match_id):
@@ -232,38 +261,43 @@ def fetch_match_details(match_id):
 
 
 def fetch_fixtures_window():
-    """Fetch upcoming/today's matches from major leagues"""
+    """Fetch today's and tomorrow's matches from major leagues"""
     all_fixtures = []
     seen = set()
     
-    for league_name, league_id in LEAGUE_IDS.items():
-        print(f"[DEBUG] Fetching matches for {league_name} (ID: {league_id})")
-        matches = fetch_matches_by_league(league_id)
-        
-        for m in matches:
-            match_id = m.get("id") or m.get("matchId")
-            if match_id and match_id not in seen:
-                seen.add(match_id)
-                m["leagueId"] = league_id
-                m["leagueName"] = league_name.replace("_", " ").title()
-                all_fixtures.append(m)
+    today = datetime.now(timezone.utc)
+    tomorrow = today + timedelta(days=1)
+    
+    dates_to_check = [
+        today.strftime("%Y%m%d"),
+        tomorrow.strftime("%Y%m%d")
+    ]
+    
+    for date in dates_to_check:
+        for league_name, league_id in LEAGUE_IDS.items():
+            print(f"[DEBUG] Fetching matches for {league_name} (ID: {league_id}) on {date}")
+            matches = fetch_matches_by_date_and_league(league_id, date)
+            
+            for m in matches:
+                match_id = m.get("id") or m.get("matchId")
+                if match_id and match_id not in seen:
+                    seen.add(match_id)
+                    m["leagueId"] = league_id
+                    m["leagueName"] = league_name.replace("_", " ").title()
+                    all_fixtures.append(m)
     
     print(f"[DEBUG] Total fixtures found: {len(all_fixtures)}")
     
-    # Filter for scheduled/upcoming matches
-    now = datetime.now(timezone.utc)
+    # Filter for scheduled/upcoming matches (not finished)
+    finished_statuses = ["FT", "FINISHED", "FULL TIME", "FULL-TIME", "AET", "PEN", "CANC", "PST", "ABD"]
     upcoming = []
     
     for m in all_fixtures:
-        # Check match status - look for scheduled/not started matches
-        status = m.get("status", "").lower()
-        if status in ["scheduled", "not started", "ns", "tbd", ""]:
-            upcoming.append(m)
-        # Also include matches starting within next 24 hours
-        elif "time" in m or "startTime" in m or "date" in m:
+        status = str(m.get("status", "")).upper()
+        if status not in finished_statuses:
             upcoming.append(m)
     
-    # If no upcoming found, return all (API might not have status field)
+    # If no upcoming found, return all
     if not upcoming:
         upcoming = all_fixtures
     
@@ -376,22 +410,45 @@ def extract_match_info(match):
         # Default to 2 hours from now if no time found
         kickoff = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
     
-    # Score
-    home_score = match.get("homeScore") or match.get("homeGoals") or 0
-    away_score = match.get("awayScore") or match.get("awayGoals") or 0
+    # Score - handle different formats
+    home_score = 0
+    away_score = 0
+    
+    # Try homeScore/awayScore
+    if "homeScore" in match:
+        home_score = match.get("homeScore", 0) or 0
+    elif "homeGoals" in match:
+        home_score = match.get("homeGoals", 0) or 0
+    elif "home_score" in match:
+        home_score = match.get("home_score", 0) or 0
+    
+    if "awayScore" in match:
+        away_score = match.get("awayScore", 0) or 0
+    elif "awayGoals" in match:
+        away_score = match.get("awayGoals", 0) or 0
+    elif "away_score" in match:
+        away_score = match.get("away_score", 0) or 0
+    
+    # Try score object
+    score = match.get("score", {})
+    if isinstance(score, dict):
+        if "home" in score:
+            home_score = score.get("home", 0) or 0
+        if "away" in score:
+            away_score = score.get("away", 0) or 0
     
     # Status
     status = match.get("status") or match.get("matchStatus") or "SCHEDULED"
     
     return {
-        "match_id": str(match_id),
+        "match_id": str(match_id) if match_id else "",
         "home": home_name,
         "away": away_name,
         "league": league_name,
         "kickoff": kickoff,
-        "home_score": home_score,
-        "away_score": away_score,
-        "status": status
+        "home_score": int(home_score) if home_score else 0,
+        "away_score": int(away_score) if away_score else 0,
+        "status": str(status)
     }
 
 
@@ -516,14 +573,16 @@ async def job_check():
         live_match = None
         for lm in live_matches:
             lm_info = extract_match_info(lm)
-            if lm_info["match_id"] == m["match_id"]:
+            if m["match_id"] and lm_info["match_id"] == m["match_id"]:
                 live_match = lm
                 break
             # Also try matching by team names
             if (m["home"].lower() in lm_info["home"].lower() or 
                 lm_info["home"].lower() in m["home"].lower()):
-                live_match = lm
-                break
+                if (m["away"].lower() in lm_info["away"].lower() or 
+                    lm_info["away"].lower() in m["away"].lower()):
+                    live_match = lm
+                    break
 
         if not live_match:
             # Check if match should be finished
@@ -539,7 +598,8 @@ async def job_check():
         status = live_info["status"].upper()
 
         # HALF-TIME UPDATE
-        if not m["ht"] and status in ["HT", "HALFTIME", "HALF TIME", "HALF-TIME", "PAUSED"]:
+        ht_statuses = ["HT", "HALFTIME", "HALF TIME", "HALF-TIME", "PAUSED"]
+        if not m["ht"] and status in ht_statuses:
             home_goals, away_goals = goals
             base = m["base_outcome"]
 
@@ -599,7 +659,8 @@ Thodi Limit Draw Par Lagao 🤝
             m["ht"] = True
 
         # FULL-TIME
-        if not m["ft"] and status in ["FT", "FINISHED", "FULL TIME", "FULL-TIME", "AET", "PEN"]:
+        ft_statuses = ["FT", "FINISHED", "FULL TIME", "FULL-TIME", "AET", "PEN"]
+        if not m["ft"] and status in ft_statuses:
             final_is_draw = goals[0] == goals[1]
             success = (
                 (m["base_outcome"] == "draw" and final_is_draw) or

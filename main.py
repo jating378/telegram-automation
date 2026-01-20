@@ -188,9 +188,23 @@ def fetch_matches_by_date_and_league(league_id, date=None):
         r.raise_for_status()
         data = r.json()
         
-        if data.get("status") and data.get("response"):
-            matches = data["response"].get("matches", [])
-            return matches
+        # Handle different response formats
+        if isinstance(data, list):
+            # API returns list directly
+            return data
+        elif isinstance(data, dict):
+            # API returns dict with status/response
+            if data.get("status") and data.get("response"):
+                response = data["response"]
+                if isinstance(response, list):
+                    return response
+                elif isinstance(response, dict):
+                    return response.get("matches", [])
+            # Try other common formats
+            if "matches" in data:
+                return data["matches"]
+            if "data" in data:
+                return data["data"] if isinstance(data["data"], list) else []
         return []
     except Exception as e:
         print(f"[ERROR] fetch_matches_by_date_and_league({league_id}, {date}): {e}")
